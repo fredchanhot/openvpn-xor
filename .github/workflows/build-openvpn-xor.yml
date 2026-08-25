@@ -31,116 +31,89 @@ jobs:
         run: |
           cd openvpn-src
           
-          # Inline patch creation to avoid network dependency on githubusercontent.com
-          cat << 'EOF' > xor_patch.diff
-diff -uNr openvpn-2.6.3/src/openvpn/forward.c openvpn-2.6.3-xor/src/openvpn/forward.c
---- openvpn-2.6.3/src/openvpn/forward.c	2023-04-19 09:17:34.000000000 +0200
-+++ openvpn-2.6.3-xor/src/openvpn/forward.c	2023-05-18 10:00:00.000000000 +0200
-@@ -1445,6 +1445,11 @@
-     {
-         struct buffer buf = c->c2.to_link;
- 
-+        if (c->options.scramble_method == SCRAMBLE_XORMASK || c->options.scramble_method == SCRAMBLE_XORPTRN) {
-+            int i;
-+            for (i = 0; i < BLEN(&buf); i++)
-+                BPTR(&buf)[i] ^= c->options.scramble_key[i % c->options.scramble_key_len];
-+        }
-         /* Move the pointer to the start of the packet data */
-         if (LINK_SOCKET_CONNECTION_ORIENTED(c->c2.link_socket))
-         {
-@@ -1607,6 +1612,11 @@
-     if (c->c2.from_link.len > 0)
-     {
-         /* Read a packet from the link socket */
-+        if (c->options.scramble_method == SCRAMBLE_XORMASK || c->options.scramble_method == SCRAMBLE_XORPTRN) {
-+            int i;
-+            for (i = 0; i < BLEN(&c->c2.from_link); i++)
-+                BPTR(&c->c2.from_link)[i] ^= c->options.scramble_key[i % c->options.scramble_key_len];
-+        }
-         process_incoming_link_part1(c);
-     }
- }
-diff -uNr openvpn-2.6.3/src/openvpn/options.c openvpn-2.6.3-xor/src/openvpn/options.c
---- openvpn-2.6.3/src/openvpn/options.c	2023-04-19 09:17:34.000000000 +0200
-+++ openvpn-2.6.3-xor/src/openvpn/options.c	2023-05-18 10:00:00.000000000 +0200
-@@ -211,6 +211,10 @@
-     "                  server drops privileges.\n"
-     "--chroot dir    : Chroot to dir after initialization.\n"
-     "--setcon ctx    : SELinux context to set after initialization.\n"
-+    "--scramble method parameter :\n"
-+    "                  Scramble traffic using method and parameter:\n"
-+    "                  xormask password  - XOR with fixed string password\n"
-+    "                  xorptrn password  - XOR with sequential values\n"
- #if ENABLE_MANAGEMENT
-     "--management option : Enable management interface.\n"
- #endif
-@@ -910,6 +914,9 @@
-     options->vlan_accept = VLAN_ONLY_UNTAGGED;
-     options->vlan_pvid = 1;
- #endif
-+    options->scramble_method = SCRAMBLE_NONE;
-+    options->scramble_key = NULL;
-+    options->scramble_key_len = 0;
- }
- 
- static void
-@@ -2900,6 +2907,11 @@
-         options->connection_list->array[i]->explicit_exit_notification = options->explicit_exit_notification;
-     }
- 
-+    if (options->scramble_method != SCRAMBLE_NONE && !options->scramble_key) {
-+        msg(M_USAGE, "The --scramble option requires a password/key parameter.");
-+    }
-+
-     /*
-      * Check dynamic generation of keys
-      */
-@@ -8490,6 +8502,23 @@
-         options->ce.tls_crypt_v2_file = p[1];
-         options->ce.tls_crypt_v2_file_inline = is_inline;
-     }
-+    else if (streq(p[0], "scramble") && p[1] && p[2])
-+    {
-+        VERIFY_TO_NOT_CONTAIN_SQUARE_BRACKETS(p[1]);
-+        VERIFY_TO_NOT_CONTAIN_SQUARE_BRACKETS(p[2]);
-+        if (streq(p[1], "xormask")) {
-+            options->scramble_method = SCRAMBLE_XORMASK;
-+        } else if (streq(p[1], "xorptrn")) {
-+            options->scramble_method = SCRAMBLE_XORPTRN;
-+        } else {
-+            msg(M_USAGE, "Unknown scramble method: %s", p[1]);
-+        }
-+        options->scramble_key = (uint8_t *)p[2];
-+        options->scramble_key_len = strlen(p[2]);
-+        if (options->scramble_key_len == 0) {
-+            msg(M_USAGE, "Scramble password cannot be empty");
-+        }
-+    }
-     else if (streq(p[0], "pull-filter") && p[1] && p[2])
-     {
-         VERIFY_TO_NOT_CONTAIN_SQUARE_BRACKETS(p[1]);
-diff -uNr openvpn-2.6.3/src/openvpn/options.h openvpn-2.6.3-xor/src/openvpn/options.h
---- openvpn-2.6.3/src/openvpn/options.h	2023-04-19 09:17:34.000000000 +0200
-+++ openvpn-2.6.3-xor/src/openvpn/options.h	2023-05-18 10:00:00.000000000 +0200
-@@ -628,6 +628,15 @@
-     /* For tracking header changes */
-     unsigned int dco_key_generation;
- #endif
-+
-+    /* Tunnelblick XOR Patch options */
-+    #define SCRAMBLE_NONE    0
-+    #define SCRAMBLE_XORMASK 1
-+    #define SCRAMBLE_XORPTRN 2
-+    int scramble_method;
-+    uint8_t *scramble_key;
-+    int scramble_key_len;
-+
- };
- 
- #define ADV_MUTUAL_EXCLUSION_ ENTRY(tls_server, tls_client) \
-EOF
+          # Base64 encoded patch file safely isolates brackets and comments from the YAML parser
+          cat << 'EOF' > xor_patch.diff.base64
+          ZGlmZiAtdU5yIG9wZW52cG4tMi42LjMvc3JjL29wZW52cG4vZm9yd2FyZC5jIG9wZW52cG4t
+          Mi42LjMteG9yL3NyYy9vcGVudnBuL2ZvcndhcmQuYwotLS0gb3BlbnZwbi0yLjYuMy9zcmMv
+          b3BlbnZwbi9mb3J3YXJkLmMJMjAyMy0wNC0xOSAwOToxNzozNC4wMDAwMDAwMDAgKzAyMDAK
+          KysrIG9wZW52cG4tMi42LjMteG9yL3NyYy9vcGVudnBuL2ZvcndhcmQuYwkyMDIzLTA1LTE4
+          IDEwOjAwOjAwLjAwMDAwMDAwMCArMDIwMApAQCAtMTQ0NSw2ICsxNDQ1LDExIEBACiAgICB7
+          CiAgICAgICAgc3RydWN0IGJ1ZmZlciBidWYgPSBjLT5jMi50b19saW5rOwogCiArICAgICAg
+          IGlmIChjLT5vcHRpb25zLnNjcmFtYmxlX21ldGhvZCA9PSBTQ1JBTUJMRV9YT1JNQVNLIHx8
+          IGMtPm9wdGlvbnMuc2NyYW1ibGVfbWV0aG9kID09IFNDUkFNQkxFX1hPUlBUUk4pIHsKKyAg
+          ICAgICAgICAgaW50IGk7CisgICAgICAgICAgIGZvciAoaSA9IDA7IGkgPCBCTEVOKCZidWYp
+          OyBpKyspCisgICAgICAgICAgICAgICBCUFRSKCZidWYpW2ldIF49IGMtPm9wdGlvbnMuc2Ny
+          YW1ibGVfa2V5W2kgJSBjLT5vcHRpb25zLnNjcmFtYmxlX2tleV9sZW5dOworICAgICAgIH0K
+          ICAgICAgICAvKiBNb3ZlIHRoZSBwb2ludGVyIHRvIHRoZSBzdGFydCBvZiB0aGUgcGFja2V0
+          IGRhdGEgKi8KICAgICAgICBpZiAoTElOS19TT0NLRVRfQ09OTkVDVElPTl9PUklFTlRFRChj
+          LT5jMi5saW5rX3NvY2tldCkpCiAgICAgICAgewpAQCAtMTYwNyw2ICsxNjEyLDExIEBACiAg
+          ICAgaWYgKGMtPmMyLmZyb21fbGluay5sZW4gPiAwKQogICAgIHsKICAgICAgICAvKiBSZWFk
+          IGEgcGFja2V0IGZyb20gdGhlIGxpbmsgc29ja2V0ICovCisgICAgICAgaWYgKGMtPm9wdGlv
+          bnMuc2NyYW1ibGVfbWV0aG9kID09IFNDUkFNQkxFX1hPUlJNQVNLIHx8IGMtPm9wdGlvbnMu
+          c2NyYW1ibGVfbWV0aG9kID09IFNDUkFNQkxFX1hPUlBUUk4pIHsKKyAgICAgICAgICAgaW50
+          IGk7CisgICAgICAgICAgIGZvciAoaSA9IDA7IGkgPCBCTEVOKCZjLT5jMi5mcm9tX2xpbmsp
+          OyBpKyspCisgICAgICAgICAgICAgICBCUFRSKCZjLT5jMi5mcm9tX2xpbmspW2ldIF49IGMt
+          Pm9wdGlvbnMuc2NyYW1ibGVfa2V5W2kgJSBjLT5vcHRpb25zLnNjcmFtYmxlX2tleV9sZW5d
+          OworICAgICAgIH0KICAgICAgICAgcHJvY2Vzc19pbmNvbWluZ19saW5rX3BhcnQxKGMpOyAg
+          ICAgCiAgICAgfQogfQpkaWZmIC11TnIgb3BlbnZwbi0yLjYuMy9zcmMvb3BlbnZwbi9vcHRp
+          b25zLmMgb3BlbnZwbi0yLjYuMy14b3Ivc3JjL29wZW52cG4vb3B0aW9ucy5jCi0tLSBvcGVu
+          dnBuLMi42LjMvc3JjL29wZW52cG4vb3B0aW9ucy5jCTIwMjMtMDQtMTkgMDk6MTc6MzQuMDAw
+          MDAwMDAwICswMjAwCisrKyBvcGVudnBuLMi42LjMteG9yL3NyYy9vcGVudnBuL29wdGlvbnMu
+          YwkyMDIzLTA1LTE4IDEwOjAwOjAwLjAwMDAwMDAwMCArMDIwMApAQCAtMjExLDYgKzIxMSwx
+          MCBAQAogICAgICIgICAgICAgICAgICAgICAgICBzZXJ2ZXIgZHJvcHMgcHJpdmlsZWdlcy5c
+          biIKICAgICAiLS1jaHJvb3QgZGlyICAgIDogQ2hyb290IHRvIGRpciBhZnRlciBpbml0aWFs
+          aXphdGlvbi5cbiIKICAgICAiLS1zZXRjb24gY3R4ICAgIDogU0VMaW51eCBjb250ZXh0IHRv
+          IHNldCBhZnRlciBpbml0aWFsaXphdGlvbi5cbiIKKyAgICAiLS1zY3JhbWJsZSBtZXRob2Qg
+          cGFyYW1ldGVyIDpcbiIKKyAgICAiICAgICAgICAgICAgICAgICAgU2NyYW1ibGUgdHJhZmZp
+          YyB1c2luZyBtZXRob2QgYW5kIHBhcmFtZXRlcjpcbiIKKyAgICAiICAgICAgICAgICAgICAg
+          ICAgeG9ybWFzayBwYXNzd29yZCAgLSBYT1Igd2l0aCBmaXhlZCBzdHJpbmcgcGFzc3dvcmRc
+          biIKKyAgICAiICAgICAgICAgICAgICAgICAgeG9ycHRybiBwYXNzd29yZCAgLSBYT1Igd2l0
+          aCBzZXF1ZW50aWFsIHZhbHVlc1xuIgogI2lmIEVOQUJMRV9NQU5BR0VNRU5UCiAgICAgIi0t
+          bWFuYWdlbWVudCBvcHRpb24gOiBFbmFibGUgbWFuYWdlbWVudCBpbnRlcmZhY2UuXG4iCiAj
+          ZW5kaWYKQEAgLTkxMCw2ICs5MTQsOSBAQAogICAgIG9wdGlvbnMtPnZsYW5fYWNjZXB0ID0g
+          VkxBTl9PTkxZX1VOVEFHR0VEOwogICAgIG9wdGlvbnMtPnZsYW5fcHZpZCA9IDE7CiAjZW5k
+          aWYKKyAgICBvcHRpb25zLT5zY3JhbWJsZV9tZXRob2QgPSBTQ1JBTUJMRV9OT05FOworICAg
+          IG9wdGlvbnMtPnNjcmFtYmxlX2tleSA9IE5VTEw7CisgICAgb3B0aW9ucy0+c2NyYW1ibGVf
+          a2V5X2xlbiA9IDA7CiB9CiAKIHN0YXRpYyB2b2lkCkBAIC0yOTAwLDYgKzI5MDcsMTEgQEAK
+          ICAgICAgICAgb3B0aW9ucy0+Y29ubmVjdGlvbl9saXN0LT5hcnJheVtpXS0+ZXhwbGljaXRf
+          ZXhpdF9ub3RpZmljYXRpb24gPSBvcHRpb25zLT5leHBsaWNpdF9leGl0X25vdGlmaWNhdGlv
+          bjsKICAgICB9CiAKKyAgICBpZiAob3B0aW9ucy0+c2NyYW1ibGVfbWV0aG9kICE9IFNDUkFN
+          QkxFX05PTkUgJiYgIW9wdGlvbnMtPnNjcmFtYmxlX2tleSkgeworICAgICAgICBtc2coTV9V
+          U0FHRSwgIlRoZSAtLXNjcmFtYmxlIG9wdGlvbiByZXF1aXJlcyBhIHBhc3N3b3JkL2tleSBw
+          YXJhbWV0ZXIuIik7CisgICAgfQorCiAgICAgLyoKICAgICAgKiBDaGVjayBkeW5hbWljIGdl
+          bmVyYXRpb24gb2Yga2V5cwogICAgICAqLwpAQCAtODQ5MCw2ICs4NTAyLDIzIEBACiAgICAg
+          ICAgIG9wdGlvbnMtPmNlLnRsc19jcnlwdF92Ml9maWxlID0gcDsKICAgICAgICAgb3B0aW9u
+          cy0+Y2UudGxzX2NyeXB0X3YyX2ZpbGVfaW5saW5lID0gaXNfaW5saW5lOwogICAgIH0KKyAg
+          ICBlbHNlIGlmIChzdHJlcShwLCAic2NyYW1ibGUiKSAmJiBwICYmIHApCisgICAgeworICAg
+          ICAgICBWRVJJRllfVE9fTk9UX0NPTlRBSU5fU1FVQVJFX0JSQUNLRVRTKHApOworICAgICAg
+          ICBWRVJJRllfVE9fTk9UX0NPTlRBSU5fU1FVQVJFX0JSQUNLRVRTKHApOworICAgICAgICBp
+          ZiAoc3RyZXEocCwgInhvcm1hc2siKSkgeworICAgICAgICAgICAgb3B0aW9ucy0+c3NyYW1i
+          bGVfbWV0aG9kID0gU0NSQU1CTEVfWE9STUFTSzsKKyAgICAgICAgfSBlbHNlIGlmIChzdHJl
+          cShwLCAieG9ycHRybiIpKSB7CisgICAgICAgICAgICBvcHRpb25zLT5zY3JhbWJsZV9tZXRo
+          b2QgPSBTQ1JBTUJMRV9YT1JQVFJOOworICAgICAgICB9IGVsc2UgeworICAgICAgICAgICAg
+          bXNnKE1fVVNBR0UsICJVbmtub3duIHNjcmFtYmxlIG1ldGhvZDogJXMiLCBwKTsKKyAgICAg
+          ICAgfQorICAgICAgICBvcHRpb25zLT5zY3JhbWJsZV9rZXkgPSAodWludDhfdCAqKXA7Cisg
+          ICAgICAgIG9wdGlvbnMtPnNjcmFtYmxlX2tleV9sZW4gPSBzdHJsZW4ocCk7CisgICAgICAg
+          IGlmIChvcHRpb25zLT5zY3JhbWJsZV9rZXdfbGVuID09IDApIHsKKyAgICAgICAgICAgIG1z
+          ZyoTV9VU0FHRSwgIlNjcmFtYmxlIHBhc3N3b3JkIGNhbm5vdCBiZSBlbXB0eSIpOworICAg
+          ICAgICB9CisgICAgfQogICAgIGVsc2UgaWYgKHN0cmVxKHAsICJwdWxsLWZpbHRlciIpICYm
+          IHAgJiYgcCkKICAgICB7CiAgICAgICAgIFZFUklGWV9UT19OT1RfQ09OVEFJTl9TUVVBUkVf
+          QlJBQ0tFVFMocCk7CmRpZmYgLXVOciBvcGVudnBuLMiLjYuMy9zcmMvb3BlbnZwbi9vcHRp
+          b25zLmggb3BlbnZwbi0yLjYuMy14b3Ivc3JjL29wZW52cG4vb3B0aW9ucy5oCi0tLSBvcGVu
+          dnBuLMiLjYuMy9zcmMvb3BlbnZwbi9vcHRpb25zLmgJMjAyMy0wNC0xOSAwOToxNzozNC4w
+          MDAwMDAwMDAgKzAyMDAKKysrIG9wZW52cG4tMi42LjMteG9yL3NyYy9vcGVudnBuL29wdGlv
+          bnMuaAkyMDIzLTA1LTE4IDEwOjAwOjAwLjAwMDAwMDAwMCArMDIwMApAQCAtNjI4LDYgKzYy
+          OCwxNSBAQAogICAgIC8qIEZvciB0cmFja2luZyBoZWFkZXIgY2hhbmdlcyAqLwogICAgIHVu
+          c2lnbmVkIGludCBkY29fa2V5X2dlbmVyYXRpb247CiAjZW5kaWYKKworICAgIC8qIFR1bm5l
+          bGJsaWNrIFhPUiBQYXRjaCBvcHRpb25zICovCisgICAgI2RlZmluZSBTQ1JBTUJMRV9OT05F
+          ICAgIDAKKyAgICAjZGVmaW5lIFNDUkFNQkxFX1hPUk1BU0sgMQorICAgICNkZWZpbmUgU0NS
+          QU1CTEVfWE9SUFRSTiAyCisgICAgaW50IHNjcmFtYmxlX21ldGhvZDsKKyAgICB1aW50OF90
+          ICpzY3JhbWJsZV9rZXk7CisgICAgaW50IHNjcmFtYmxlX2tleV9sZW47CisKIH07CiAKICNk
+          ZWZpbmUgQURWX01VVFVBTF9FWENMVVNJT05fIEVOVFJZKHRsc19zZXJ2ZXIsIHRsc19jbGll
+          bnQpIFwKEOF
 
-          # Apply the native structural patch
+          # Decode it cleanly out of the YAML runtime stream
+          base64 -d xor_patch.diff.base64 > xor_patch.diff
           patch -p1 < xor_patch.diff
 
       - name: Configure and Compile OpenVPN
@@ -173,4 +146,3 @@ EOF
           name: openvpn-xor-linux-binary
           path: build_output/openvpn-xor-linux
           retention-days: 7
-
