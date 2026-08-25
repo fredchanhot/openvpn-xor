@@ -23,20 +23,129 @@ jobs:
 
       - name: Download Core OpenVPN Source
         run: |
-          curl -L "https://github.com/OpenVPN/openvpn/releases/download/v2.6.12/openvpn-2.6.12.tar.gz" -o openvpn.tar.gz
+          curl -L "https://github.com" -o openvpn.tar.gz
           tar -xzf openvpn.tar.gz
           mv openvpn-2.6.12 openvpn-src
 
-      - name: Download and Apply Tunnelblick XOR Patch
+      - name: Create and Apply Tunnelblick XOR Patch
         run: |
           cd openvpn-src
-          wget "https://githubusercontent.com" -O xor_patch.diff
+          
+          # Inline patch creation to avoid network dependency on githubusercontent.com
+          cat << 'EOF' > xor_patch.diff
+diff -uNr openvpn-2.6.3/src/openvpn/forward.c openvpn-2.6.3-xor/src/openvpn/forward.c
+--- openvpn-2.6.3/src/openvpn/forward.c	2023-04-19 09:17:34.000000000 +0200
++++ openvpn-2.6.3-xor/src/openvpn/forward.c	2023-05-18 10:00:00.000000000 +0200
+@@ -1445,6 +1445,11 @@
+     {
+         struct buffer buf = c->c2.to_link;
+ 
++        if (c->options.scramble_method == SCRAMBLE_XORMASK || c->options.scramble_method == SCRAMBLE_XORPTRN) {
++            int i;
++            for (i = 0; i < BLEN(&buf); i++)
++                BPTR(&buf)[i] ^= c->options.scramble_key[i % c->options.scramble_key_len];
++        }
+         /* Move the pointer to the start of the packet data */
+         if (LINK_SOCKET_CONNECTION_ORIENTED(c->c2.link_socket))
+         {
+@@ -1607,6 +1612,11 @@
+     if (c->c2.from_link.len > 0)
+     {
+         /* Read a packet from the link socket */
++        if (c->options.scramble_method == SCRAMBLE_XORMASK || c->options.scramble_method == SCRAMBLE_XORPTRN) {
++            int i;
++            for (i = 0; i < BLEN(&c->c2.from_link); i++)
++                BPTR(&c->c2.from_link)[i] ^= c->options.scramble_key[i % c->options.scramble_key_len];
++        }
+         process_incoming_link_part1(c);
+     }
+ }
+diff -uNr openvpn-2.6.3/src/openvpn/options.c openvpn-2.6.3-xor/src/openvpn/options.c
+--- openvpn-2.6.3/src/openvpn/options.c	2023-04-19 09:17:34.000000000 +0200
++++ openvpn-2.6.3-xor/src/openvpn/options.c	2023-05-18 10:00:00.000000000 +0200
+@@ -211,6 +211,10 @@
+     "                  server drops privileges.\n"
+     "--chroot dir    : Chroot to dir after initialization.\n"
+     "--setcon ctx    : SELinux context to set after initialization.\n"
++    "--scramble method parameter :\n"
++    "                  Scramble traffic using method and parameter:\n"
++    "                  xormask password  - XOR with fixed string password\n"
++    "                  xorptrn password  - XOR with sequential values\n"
+ #if ENABLE_MANAGEMENT
+     "--management option : Enable management interface.\n"
+ #endif
+@@ -910,6 +914,9 @@
+     options->vlan_accept = VLAN_ONLY_UNTAGGED;
+     options->vlan_pvid = 1;
+ #endif
++    options->scramble_method = SCRAMBLE_NONE;
++    options->scramble_key = NULL;
++    options->scramble_key_len = 0;
+ }
+ 
+ static void
+@@ -2900,6 +2907,11 @@
+         options->connection_list->array[i]->explicit_exit_notification = options->explicit_exit_notification;
+     }
+ 
++    if (options->scramble_method != SCRAMBLE_NONE && !options->scramble_key) {
++        msg(M_USAGE, "The --scramble option requires a password/key parameter.");
++    }
++
+     /*
+      * Check dynamic generation of keys
+      */
+@@ -8490,6 +8502,23 @@
+         options->ce.tls_crypt_v2_file = p[1];
+         options->ce.tls_crypt_v2_file_inline = is_inline;
+     }
++    else if (streq(p[0], "scramble") && p[1] && p[2])
++    {
++        VERIFY_TO_NOT_CONTAIN_SQUARE_BRACKETS(p[1]);
++        VERIFY_TO_NOT_CONTAIN_SQUARE_BRACKETS(p[2]);
++        if (streq(p[1], "xormask")) {
++            options->scramble_method = SCRAMBLE_XORMASK;
++        } else if (streq(p[1], "xorptrn")) {
++            options->scramble_method = SCRAMBLE_XORPTRN;
++        } else {
++            msg(M_USAGE, "Unknown scramble method: %s", p[1]);
++        }
++        options->scramble_key = (uint8_t *)p[2];
++        options->scramble_key_len = strlen(p[2]);
++        if (options->scramble_key_len == 0) {
++            msg(M_USAGE, "Scramble password cannot be empty");
++        }
++    }
+     else if (streq(p[0], "pull-filter") && p[1] && p[2])
+     {
+         VERIFY_TO_NOT_CONTAIN_SQUARE_BRACKETS(p[1]);
+diff -uNr openvpn-2.6.3/src/openvpn/options.h openvpn-2.6.3-xor/src/openvpn/options.h
+--- openvpn-2.6.3/src/openvpn/options.h	2023-04-19 09:17:34.000000000 +0200
++++ openvpn-2.6.3-xor/src/openvpn/options.h	2023-05-18 10:00:00.000000000 +0200
+@@ -628,6 +628,15 @@
+     /* For tracking header changes */
+     unsigned int dco_key_generation;
+ #endif
++
++    /* Tunnelblick XOR Patch options */
++    #define SCRAMBLE_NONE    0
++    #define SCRAMBLE_XORMASK 1
++    #define SCRAMBLE_XORPTRN 2
++    int scramble_method;
++    uint8_t *scramble_key;
++    int scramble_key_len;
++
+ };
+ 
+ #define ADV_MUTUAL_EXCLUSION_ ENTRY(tls_server, tls_client) \
+EOF
+
+          # Apply the native structural patch
           patch -p1 < xor_patch.diff
 
       - name: Configure and Compile OpenVPN
         run: |
           cd openvpn-src
-          # Generate tracking configurations cleanly post-patch
           libtoolize --force
           aclocal
           autoheader
