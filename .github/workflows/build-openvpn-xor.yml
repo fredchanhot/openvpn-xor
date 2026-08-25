@@ -1,13 +1,17 @@
 name: Build OpenVPN with XOR Patch
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual trigger from the Actions tab
   push:
-    branches: [ main ]
+    tags:
+      - 'v*' # Triggers automatically when you push a version tag like v2.6.12-xor1
 
 jobs:
   build-linux:
     runs-on: ubuntu-24.04
+    # Crucial permission mapping to allow the runner to upload assets to the Release page
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Local Repository
@@ -32,7 +36,6 @@ jobs:
         run: |
           cd openvpn-src
           
-          # Base64 encoded patch safely isolates internal formatting from the YAML parser
           cat << 'EOF' > xor_patch.diff.base64
           ZGlmZiAtdU5yIG9wZW52cG4tMi42LjMvc3JjL29wZW52cG4vZm9yd2FyZC5jIG9wZW52cG4t
           Mi42LjMteG9yL3NyYy9vcGVudnBuL2ZvcndhcmQuYwotLS0gb3BlbnZwbi0yLjYuMy9zcmMv
@@ -44,8 +47,8 @@ jobs:
           IGMtPm9wdGlvbnMuc2NyYW1ibGVfbWV0aG9kID09IFNDUkFNQkxFX1hPUlBUUk4pIHsKKyAg
           ICAgICAgICAgaW50IGk7CisgICAgICAgICAgIGZvciAoaSA9IDA7IGkgPCBCTEVOKCZidWYp
           OyBpKyspCisgICAgICAgICAgICAgICBCUFRSKCZidWYpW2ldIF49IGMtPm9wdGlvbnMuc2Ny
-          YW1ibGVfa2V5W2kgJSBjLT5vcHRpb25zLnNjcmFtYmxlX2tleV9sZW4gXTsKKyAgICAgICB9
-          CiAgICAgICAgMCBNb3ZlIHRoZSBwb2ludGVyIHRvIHRoZSBzdGFydCBvZiB0aGUgcGFja2V0
+          YW1ibGVfa2V5W2kgJSBjLT5vcHRpb25zLnNjcmFtYmxlX2tleV9sZW5dOworICAgICAgIH0K
+          ICAgICAgICAvKiBNb3ZlIHRoZSBwb2ludGVyIHRvIHRoZSBzdGFydCBvZiB0aGUgcGFja2V0
           IGRhdGEgKi8KICAgICAgICBpZiAoTElOS19TT0NLRVRfQ09OTkVDVElPTl9PUklFTlRFRChj
           LT5jMi5saW5rX3NvY2tldCkpCiAgICAgICAgewpAQCAtMTYwNyw2ICsxNjEyLDExIEBACiAg
           ICAgaWYgKGMtPmMyLmZyb21fbGluay5sZW4gPiAwKQogICAgIHsKICAgICAgICAvKiBSZWFk
@@ -105,8 +108,8 @@ jobs:
           MDAwMDAwMDAgKzAyMDAKKysrIG9wZW52cG4tMi42LjMteG9yL3NyYy9vcGVudnBuL29wdGlv
           bnMuaAkyMDIzLTA1LTE4IDEwOjAwOjAwLjAwMDAwMDAwMCArMDIwMApAQCAtNjI4LDYgKzYy
           OCwxNSBAQAogICAgIC8qIEZvciB0cmFja2luZyBoZWFkZXIgY2hhbmdlcyAqLwogICAgIHVu
-          c2lnbmVkIGludCBkY29fa2V5X2dlbmVyYXRpb247CiAjZW5kaWYKKworICAgIC8qIFR1bm5lb
-          GJsaWNrIFhPUiBQYXRjaCBvcHRpb25zICovCisgICAgI2RlZmluZSBTQ1JBTUJMRV9OT05F
+          c2lnbmVkIGludCBkY29fa2V5X2dlbmVyYXRpb247CiAjZW5kaWYKKworICAgIC8qIFR1bm5l
+          bGJsaWNrIFhPUiBQYXRjaCBvcHRpb25zICovCisgICAgI2RlZmluZSBTQ1JBTUJMRV9OT05F
           ICAgIDAKKyAgICAjZGVmaW5lIFNDUkFNQkxFX1hPUk1BU0sgMQorICAgICNkZWZpbmUgU0NS
           QU1CTEVfWE9SUFRSTiAyCisgICAgaW50IHNjcmFtYmxlX21ldGhvZDsKKyAgICB1aW50OF90
           ICpzY3JhbWJsZV9rZXkeyOworICAgIGludCBzY3JhbWJsZV9rZXlfbGVuOworCiB9CiAKICNk
@@ -119,8 +122,6 @@ jobs:
       - name: Configure and Compile OpenVPN
         run: |
           cd openvpn-src
-          
-          # Initialize autotools since checking out clean git tree doesn't include raw configure binaries
           autoreconf -i -v -f
           
           ./configure \
@@ -130,18 +131,27 @@ jobs:
             --enable-plugins \
             --disable-dco
             
-          make -j$(nproc)
+          make -j\$(nproc)
 
-      - name: Prepare Binary for Artifact Upload
+      - name: Prepare Binary for Deployment
         run: |
           mkdir -p build_output
           cp openvpn-src/src/openvpn/openvpn build_output/openvpn-xor-linux
-          chmod +x build_output/build_output/openvpn-xor-linux || cp openvpn-src/src/openvpn/openvpn build_output/openvpn-xor-linux
+          chmod +x build_output/openvpn-xor-linux
 
-      - name: Upload Patched OpenVPN Binary
-        uses: actions/upload-artifact@v4
+      - name: Automatically Create Release and Upload Binary
+        uses: softprops/action-gh-release@v2
         with:
-          name: openvpn-xor-linux-binary
-          path: build_output/openvpn-xor-linux
-          retention-days: 7
-
+          tag_name: \${{ github.ref_type == 'tag' && github.ref_name || 'v2.6.12-xor-manual' }}
+          name: OpenVPN 2.6.12 with Tunnelblick XOR Patch
+          body: |
+            Automated production build of OpenVPN with the Tunnelblick XOR scrambling patch applied.
+            
+            **Configuration Syntax:**
+            ```text
+            scramble xormask your_secret_key
+            ```
+            *Note: Kernel-level DCO is explicitly disabled to allow the user-space obfuscation layer to operate.*
+          draft: false
+          prerelease: false
+          files: build_output/openvpn-xor-linux
