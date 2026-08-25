@@ -23,8 +23,7 @@ jobs:
 
       - name: Download Core OpenVPN Source
         run: |
-          # Pulling the core openvpn engine tarball from native GitHub release assets
-          wget "https://github.com" -O openvpn.tar.gz
+          curl -L "https://github.com/OpenVPN/openvpn/releases/download/v2.6.12/openvpn-2.6.12.tar.gz" -o openvpn.tar.gz
           tar -xzf openvpn.tar.gz
           mv openvpn-2.6.12 openvpn-src
 
@@ -37,8 +36,12 @@ jobs:
       - name: Configure and Compile OpenVPN
         run: |
           cd openvpn-src
-          # Rebuild configuration script environment tracking because we patched the engine code
-          autoreconf -i -v -f
+          # Generate tracking configurations cleanly post-patch
+          libtoolize --force
+          aclocal
+          autoheader
+          automake --force-missing --add-missing
+          autoconf
           
           ./configure \
             --enable-systemd \
