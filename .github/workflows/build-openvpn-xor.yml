@@ -1,15 +1,13 @@
 name: Build OpenVPN with XOR Patch
 
 on:
-  workflow_dispatch: # Allows manual trigger from the Actions tab
+  workflow_dispatch:
   push:
     branches: [ main ]
 
 jobs:
   build-linux:
     runs-on: ubuntu-24.04
-    env:
-      OPENVPN_VERSION: "2.6.12"
 
     steps:
       - name: Checkout Repository
@@ -23,30 +21,25 @@ jobs:
             libpam0g-dev libpkcs11-helper1-dev libsystemd-dev resolvconf \
             pkg-config autoconf automake libtool libcap-ng-dev libnl-genl-3-dev
 
-      - name: Download OpenVPN Source Code
+      - name: Download Core OpenVPN Source
         run: |
-          # Hardcoded URL to prevent syntax translation or evaluation bugs
-          wget "https://openvpn.net" -O openvpn.tar.gz
+          # Pulling the core openvpn engine tarball from native GitHub release assets
+          wget "https://github.com" -O openvpn.tar.gz
           tar -xzf openvpn.tar.gz
           mv openvpn-2.6.12 openvpn-src
-
-
 
       - name: Download and Apply Tunnelblick XOR Patch
         run: |
           cd openvpn-src
-          # Fetch the official XOR patch maintained by Tunnelblick for this specific version group
           wget "https://githubusercontent.com" -O xor_patch.diff
-          
-          # Apply the patch cleanly
           patch -p1 < xor_patch.diff
 
       - name: Configure and Compile OpenVPN
         run: |
           cd openvpn-src
+          # Rebuild configuration script environment tracking because we patched the engine code
           autoreconf -i -v -f
           
-          # DCO (Data Channel Offload) must be disabled as it bypasses the kernel space where the XOR patch operates
           ./configure \
             --enable-systemd \
             --enable-async-push \
@@ -68,3 +61,4 @@ jobs:
           name: openvpn-xor-linux-binary
           path: build_output/openvpn-xor-linux
           retention-days: 7
+
