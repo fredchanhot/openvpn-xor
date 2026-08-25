@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Local Repository
         uses: actions/checkout@v4
 
       - name: Install Build Dependencies
@@ -21,17 +21,18 @@ jobs:
             libpam0g-dev libpkcs11-helper1-dev libsystemd-dev resolvconf \
             pkg-config autoconf automake libtool libcap-ng-dev libnl-genl-3-dev
 
-      - name: Download Core OpenVPN Source
-        run: |
-          curl -L "https://github.com" -o openvpn.tar.gz
-          tar -xzf openvpn.tar.gz
-          mv openvpn-2.6.12 openvpn-src
+      - name: Checkout OpenVPN Source Code Natively
+        uses: actions/checkout@v4
+        with:
+          repository: 'OpenVPN/openvpn'
+          ref: 'v2.6.12'
+          path: 'openvpn-src'
 
       - name: Create and Apply Tunnelblick XOR Patch
         run: |
           cd openvpn-src
           
-          # Base64 encoded patch file safely isolates brackets and comments from the YAML parser
+          # Base64 encoded patch safely isolates internal formatting from the YAML parser
           cat << 'EOF' > xor_patch.diff.base64
           ZGlmZiAtdU5yIG9wZW52cG4tMi42LjMvc3JjL29wZW52cG4vZm9yd2FyZC5jIG9wZW52cG4t
           Mi42LjMteG9yL3NyYy9vcGVudnBuL2ZvcndhcmQuYwotLS0gb3BlbnZwbi0yLjYuMy9zcmMv
@@ -43,8 +44,8 @@ jobs:
           IGMtPm9wdGlvbnMuc2NyYW1ibGVfbWV0aG9kID09IFNDUkFNQkxFX1hPUlBUUk4pIHsKKyAg
           ICAgICAgICAgaW50IGk7CisgICAgICAgICAgIGZvciAoaSA9IDA7IGkgPCBCTEVOKCZidWYp
           OyBpKyspCisgICAgICAgICAgICAgICBCUFRSKCZidWYpW2ldIF49IGMtPm9wdGlvbnMuc2Ny
-          YW1ibGVfa2V5W2kgJSBjLT5vcHRpb25zLnNjcmFtYmxlX2tleV9sZW5dOworICAgICAgIH0K
-          ICAgICAgICAvKiBNb3ZlIHRoZSBwb2ludGVyIHRvIHRoZSBzdGFydCBvZiB0aGUgcGFja2V0
+          YW1ibGVfa2V5W2kgJSBjLT5vcHRpb25zLnNjcmFtYmxlX2tleV9sZW4gXTsKKyAgICAgICB9
+          CiAgICAgICAgMCBNb3ZlIHRoZSBwb2ludGVyIHRvIHRoZSBzdGFydCBvZiB0aGUgcGFja2V0
           IGRhdGEgKi8KICAgICAgICBpZiAoTElOS19TT0NLRVRfQ09OTkVDVElPTl9PUklFTlRFRChj
           LT5jMi5saW5rX3NvY2tldCkpCiAgICAgICAgewpAQCAtMTYwNyw2ICsxNjEyLDExIEBACiAg
           ICAgaWYgKGMtPmMyLmZyb21fbGluay5sZW4gPiAwKQogICAgIHsKICAgICAgICAvKiBSZWFk
@@ -99,31 +100,28 @@ jobs:
           ICAgICB9CisgICAgfQogICAgIGVsc2UgaWYgKHN0cmVxKHAsICJwdWxsLWZpbHRlciIpICYm
           IHAgJiYgcCkKICAgICB7CiAgICAgICAgIFZFUklGWV9UT19OT1RfQ09OVEFJTl9TUVVBUkVf
           QlJBQ0tFVFMocCk7CmRpZmYgLXVOciBvcGVudnBuLMiLjYuMy9zcmMvb3BlbnZwbi9vcHRp
-          b25zLmggb3BlbnZwbi0yLjYuMy14b3Ivc3JjL29wZW52cG4vb3B0aW9ucy5oCi0tLSBvcGVu
+          b25zLmggb3BlbnZwbi0yLjYuMy14b3Ivc3JjL29wZW52cG4vb3B0aW9ucy5hCi0tLSBvcGVu
           dnBuLMiLjYuMy9zcmMvb3BlbnZwbi9vcHRpb25zLmgJMjAyMy0wNC0xOSAwOToxNzozNC4w
           MDAwMDAwMDAgKzAyMDAKKysrIG9wZW52cG4tMi42LjMteG9yL3NyYy9vcGVudnBuL29wdGlv
           bnMuaAkyMDIzLTA1LTE4IDEwOjAwOjAwLjAwMDAwMDAwMCArMDIwMApAQCAtNjI4LDYgKzYy
           OCwxNSBAQAogICAgIC8qIEZvciB0cmFja2luZyBoZWFkZXIgY2hhbmdlcyAqLwogICAgIHVu
-          c2lnbmVkIGludCBkY29fa2V5X2dlbmVyYXRpb247CiAjZW5kaWYKKworICAgIC8qIFR1bm5l
-          bGJsaWNrIFhPUiBQYXRjaCBvcHRpb25zICovCisgICAgI2RlZmluZSBTQ1JBTUJMRV9OT05F
+          c2lnbmVkIGludCBkY29fa2V5X2dlbmVyYXRpb247CiAjZW5kaWYKKworICAgIC8qIFR1bm5lb
+          GJsaWNrIFhPUiBQYXRjaCBvcHRpb25zICovCisgICAgI2RlZmluZSBTQ1JBTUJMRV9OT05F
           ICAgIDAKKyAgICAjZGVmaW5lIFNDUkFNQkxFX1hPUk1BU0sgMQorICAgICNkZWZpbmUgU0NS
           QU1CTEVfWE9SUFRSTiAyCisgICAgaW50IHNjcmFtYmxlX21ldGhvZDsKKyAgICB1aW50OF90
-          ICpzY3JhbWJsZV9rZXk7CisgICAgaW50IHNjcmFtYmxlX2tleV9sZW47CisKIH07CiAKICNk
+          ICpzY3JhbWJsZV9rZXkeyOworICAgIGludCBzY3JhbWJsZV9rZXlfbGVuOworCiB9CiAKICNk
           ZWZpbmUgQURWX01VVFVBTF9FWENMVVNJT05fIEVOVFJZKHRsc19zZXJ2ZXIsIHRsc19jbGll
           bnQpIFwKEOF
 
-          # Decode it cleanly out of the YAML runtime stream
           base64 -d xor_patch.diff.base64 > xor_patch.diff
           patch -p1 < xor_patch.diff
 
       - name: Configure and Compile OpenVPN
         run: |
           cd openvpn-src
-          libtoolize --force
-          aclocal
-          autoheader
-          automake --force-missing --add-missing
-          autoconf
+          
+          # Initialize autotools since checking out clean git tree doesn't include raw configure binaries
+          autoreconf -i -v -f
           
           ./configure \
             --enable-systemd \
@@ -138,7 +136,7 @@ jobs:
         run: |
           mkdir -p build_output
           cp openvpn-src/src/openvpn/openvpn build_output/openvpn-xor-linux
-          chmod +x build_output/openvpn-xor-linux
+          chmod +x build_output/build_output/openvpn-xor-linux || cp openvpn-src/src/openvpn/openvpn build_output/openvpn-xor-linux
 
       - name: Upload Patched OpenVPN Binary
         uses: actions/upload-artifact@v4
@@ -146,3 +144,4 @@ jobs:
           name: openvpn-xor-linux-binary
           path: build_output/openvpn-xor-linux
           retention-days: 7
+
