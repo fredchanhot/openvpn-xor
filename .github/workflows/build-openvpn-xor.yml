@@ -1,0 +1,67 @@
+name: Build OpenVPN with XOR Patch
+
+on:
+  workflow_dispatch: # Allows manual trigger from the Actions tab
+  push:
+    branches: [ main ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04
+    env:
+      OPENVPN_VERSION: "2.6.12"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-2.0 --yes install \
+            build-essential libssl-dev iproute2 liblz4-dev liblzo2-dev \
+            libpam0g-dev libpkcs11-helper1-dev libsystemd-dev resolvconf \
+            pkg-config autoconf automake libtool libcap-ng-dev libnl-genl-3-dev
+
+      - name: Download OpenVPN Source Code
+        run: |
+          wget https://github.com{{ env.OPENVPN_VERSION }}.tar.gz -O openvpn.tar.gz
+          tar -xzf openvpn.tar.gz
+          mv openvpn-${{ env.OPENVPN_VERSION }} openvpn-src
+
+      - name: Download and Apply Tunnelblick XOR Patch
+        run: |
+          cd openvpn-src
+          # Fetch the official XOR patch maintained by Tunnelblick for this specific version group
+          wget "https://githubusercontent.com" -O xor_patch.diff
+          
+          # Apply the patch cleanly
+          patch -p1 < xor_patch.diff
+
+      - name: Configure and Compile OpenVPN
+        run: |
+          cd openvpn-src
+          autoreconf -i -v -f
+          
+          # DCO (Data Channel Offload) must be disabled as it bypasses the kernel space where the XOR patch operates
+          ./configure \
+            --enable-systemd \
+            --enable-async-push \
+            --enable-management \
+            --enable-plugins \
+            --disable-dco
+            
+          make -j$(nproc)
+
+      - name: Prepare Binary for Artifact Upload
+        run: |
+          mkdir -p build_output
+          cp openvpn-src/src/openvpn/openvpn build_output/openvpn-xor-linux
+          chmod +x build_output/openvpn-xor-linux
+
+      - name: Upload Patched OpenVPN Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: openvpn-xor-linux-binary
+          path: build_output/openvpn-xor-linux
+          retention-days: 7
