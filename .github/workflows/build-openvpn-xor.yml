@@ -24,10 +24,14 @@ jobs:
             pkg-config autoconf automake libtool libcap-ng-dev libnl-genl-3-dev
 
       - name: Download OpenVPN Source Code
+        env:
+          VERSION: ${{ env.OPENVPN_VERSION }}
         run: |
-          wget https://github.com{{ env.OPENVPN_VERSION }}.tar.gz -O openvpn.tar.gz
+          # Download from the official release server using stable shell variables
+          wget "https://openvpn.net{VERSION}.tar.gz" -O openvpn.tar.gz
           tar -xzf openvpn.tar.gz
-          mv openvpn-${{ env.OPENVPN_VERSION }} openvpn-src
+          mv openvpn-${VERSION} openvpn-src
+
 
       - name: Download and Apply Tunnelblick XOR Patch
         run: |
